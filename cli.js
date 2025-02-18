@@ -5,7 +5,8 @@ const bs58 = require("bs58");
 const crypto = require("crypto");
 const snarkjs = require("snarkjs");
 const fs = require("fs");
-const { ComputeBudgetProgram } = require('@solana/web3.js');
+const { ComputeBudgetProgram } = require("@solana/web3.js");
+const BN = require("bn.js");
 
 const PROGRAM_ID = new web3.PublicKey(
   "Ag36R1MUAHhyAYB96aR3JAScLqE6YFNau81iCcf2Y6RC"
@@ -28,7 +29,6 @@ const secretKey = Uint8Array.from(
 const payer = web3.Keypair.fromSecretKey(secretKey);
 // Pool PDA (Replace with the actual PDA address if needed)
 
-
 /**
  * Compute the 8-byte instruction discriminator manually
  * @param {string} functionName - The Anchor instruction name (e.g., "global:deposit").
@@ -37,6 +37,46 @@ const payer = web3.Keypair.fromSecretKey(secretKey);
 function getInstructionDiscriminator(functionName) {
   const hash = crypto.createHash("sha256").update(functionName).digest();
   return hash.slice(0, 8);
+}
+
+const {
+  poseidon1,
+  poseidon2,
+  poseidon3,
+  poseidon4,
+  poseidon5,
+  poseidon6,
+  poseidon7,
+  poseidon8,
+  poseidon9,
+  poseidon10,
+  poseidon11,
+  poseidon12,
+  poseidon13,
+} = require("poseidon-lite");
+const { buildPoseidon, poseidon } = require("circomlibjs");
+// const poseidon254 = createHash(1, 8, 56);
+
+async function generateLeaf(secret, nullifier) {
+
+  // Step 1: Concatenate raw bytes (as in Rust)
+  const secretBuffer = Buffer.from(secret, "utf8");
+  const nullifierBuffer = Buffer.from(nullifier, "utf8");
+  const concatenated = Buffer.concat([secretBuffer, nullifierBuffer]);
+
+  // Step 2: Convert to BigInt (BigEndian)
+  const concatenatedHex = concatenated.toString("hex");
+  const inputBigInt = BigInt("0x" + concatenatedHex);
+
+  const hash = poseidon1([inputBigInt]);
+
+  // Step 4: Convert hash to 32-byte buffer (BigEndian)
+  const hashHex = hash.toString(16).padStart(64, "0");
+  const hashBuffer = Buffer.from(hashHex, "hex");
+
+  // Convert bytes to bigint for poseidon input
+  console.log("hash buffer:", Array.from(hashBuffer));
+  return hashBuffer;
 }
 
 // Utility: Send and confirm a transaction with logs, payer is default signer
@@ -62,17 +102,6 @@ async function sendTransactionWithLogs(transaction) {
     console.error("Error during transaction:", err);
     throw err;
   }
-}
-
-// Generate a random nullifier and secret for deposit
-function generateCommitment() {
-  const nullifier = crypto.randomBytes(16); // 16 bytes
-  const secret = crypto.randomBytes(16); // 16 bytes
-  const commitment = crypto
-    .createHash("sha256")
-    .update(Buffer.concat([nullifier, secret]))
-    .digest(); // 32 bytes
-  return { nullifier, secret, commitment };
 }
 
 const IDENTIFIER = 1;
@@ -127,10 +156,10 @@ async function initializePool() {
     units: 800_000,
   });
 
-  
-
   // Send the transaction
-  const transaction = new web3.Transaction().add(computeBudgetIx).add(instruction);
+  const transaction = new web3.Transaction()
+    .add(computeBudgetIx)
+    .add(instruction);
   const tx = await sendTransactionWithLogs(transaction);
   console.log("Pool initialized. Transaction:", tx);
 }
@@ -138,35 +167,36 @@ async function initializePool() {
 // Function to deposit
 async function deposit() {
   console.log("Generating commitment...");
-  const { nullifier, secret, commitment } = generateCommitment();
 
-  console.log("Depositing 0.1 SOL...");
+  // Generate secret and nullifier
+  const secret = "secret1"; // Random secret
+  const nullifier = "nullifier1"; // Unique nullifier
+  console.log("\nSecret: ", secret);
+  console.log("Nullifier: ", nullifier);
+  const leaf = await generateLeaf(secret, nullifier);
 
+  console.log("Constructing transaction...");
   const discriminator = getInstructionDiscriminator("global:deposit");
-  const commitmentBuffer = (await commitment).toBuffer();
-  if (commitmentBuffer.length != 32) {
-    throw new Error("Commitment buffer not 32 bytes");
-  }
+
+  // Create instruction data
   const instructionData = new web3.TransactionInstruction({
     keys: [
-      { pubkey: poolPDA, isSigner: false, isWritable: true },
-      { pubkey: payer.publicKey, isSigner: true, isWritable: false },
+      { pubkey: poolPDA, isSigner: false, isWritable: true }, // Pool PDA
+      { pubkey: payer.publicKey, isSigner: true, isWritable: false }, // User making the deposit
       {
         pubkey: web3.SystemProgram.programId,
         isSigner: false,
         isWritable: false,
       },
     ],
-    ProgramId: PROGRAM_ID,
-    data: Buffer.concat([Buffer.from(discriminator), commitmentBuffer]), //How do iadd the commitment to the buffer ? the program expects a [u8, 32]
+    programId: PROGRAM_ID,
+    data: Buffer.concat([Buffer.from(discriminator), leaf]),
   });
+
+  // Create and send the transaction
   const transaction = new web3.Transaction().add(instructionData);
   const tx = await sendTransactionWithLogs(transaction);
-
-  console.log("Deposit successful! Transaction:", tx);
-  console.log("Save your nullifier and secret to withdraw later:");
-  console.log("Nullifier:", bs58.encode(nullifier));
-  console.log("Secret:", bs58.encode(secret));
+  console.log("Deposit successful! ✅ TX:", tx);
 }
 
 // Function to deposit
@@ -199,36 +229,6 @@ async function withdraw() {
   const tx = await sendTransactionWithLogs(transaction);
   console.log("Withdrawing success: ", tx);
 }
-
-// // Function to withdraw
-// async function withdraw() {
-//   const nullifierBase58 = prompt("Enter your nullifier (Base58): ");
-//   const secretBase58 = prompt("Enter your secret (Base58): ");
-
-//   const nullifier = bs58.decode(nullifierBase58);
-//   const secret = bs58.decode(secretBase58);
-//   const commitment = web3.PublicKey.createWithSeed(
-//     new web3.PublicKey(bs58.encode(nullifier)),
-//     "commitment",
-//     PROGRAM_ID
-//   );
-
-//   console.log("Generating fake ZK proof (Placeholder)...");
-//   const fakeProof = Buffer.from([1, 2, 3]); // Replace with a real ZK-SNARK proof later
-
-//   console.log("Attempting withdrawal...");
-//   const tx = await program.methods
-//     .withdraw(fakeProof, commitment.toBuffer())
-//     .accounts({
-//       pool: poolPDA,
-//       recipient: keypair.publicKey,
-//       systemProgram: web3.SystemProgram.programId,
-//     })
-//     .signers([keypair])
-//     .rpc();
-
-//   console.log("Withdrawal successful! Transaction:", tx);
-// }
 
 // Function to prompt user
 async function main() {

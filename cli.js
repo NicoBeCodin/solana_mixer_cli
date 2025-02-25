@@ -97,6 +97,36 @@ async function generateLeaf(secret, nullifier) {
   return hashBuffer;
 }
 
+function bigIntToBuffer(bigIntStr, byteSize) {
+  let hexStr = BigInt(bigIntStr)
+    .toString(16)
+    .padStart(byteSize * 2, "0"); // Ensure it is the correct length
+  return Buffer.from(hexStr, "hex");
+}
+
+function g1Uncompressed(curve, p1Raw) {
+  let p1 = curve.G1.fromObject(p1Raw);
+
+  let buff = new Uint8Array(64); // 64 bytes for G1 uncompressed
+  curve.G1.toRprUncompressed(buff, 0, p1);
+
+  return Buffer.from(buff);
+}
+
+function g2Uncompressed(curve, p2Raw) {
+  let p2 = curve.G2.fromObject(p2Raw);
+
+  let buff = new Uint8Array(128); // 128 bytes for G2 uncompressed
+  curve.G2.toRprUncompressed(buff, 0, p2);
+
+  return Buffer.from(buff);
+}
+
+function to32ByteBuffer(bigInt) {
+  const hexString = bigInt.toString(16).padStart(64, "0");
+  const buffer = Buffer.from(hexString, "hex");
+  return buffer;
+}
 // Function to initialize the pool
 async function initializePool() {
   console.log("Initializing mixer pool...");
@@ -363,36 +393,7 @@ async function generateDepositProof() {
   }
 }
 
-function bigIntToBuffer(bigIntStr, byteSize) {
-  let hexStr = BigInt(bigIntStr)
-    .toString(16)
-    .padStart(byteSize * 2, "0"); // Ensure it is the correct length
-  return Buffer.from(hexStr, "hex");
-}
 
-function g1Uncompressed(curve, p1Raw) {
-  let p1 = curve.G1.fromObject(p1Raw);
-
-  let buff = new Uint8Array(64); // 64 bytes for G1 uncompressed
-  curve.G1.toRprUncompressed(buff, 0, p1);
-
-  return Buffer.from(buff);
-}
-
-function g2Uncompressed(curve, p2Raw) {
-  let p2 = curve.G2.fromObject(p2Raw);
-
-  let buff = new Uint8Array(128); // 128 bytes for G2 uncompressed
-  curve.G2.toRprUncompressed(buff, 0, p2);
-
-  return Buffer.from(buff);
-}
-
-function to32ByteBuffer(bigInt) {
-  const hexString = bigInt.toString(16).padStart(64, "0");
-  const buffer = Buffer.from(hexString, "hex");
-  return buffer;
-}
 
 async function withdraw(proof, publicSignals) {
   console.log("Building transaction toverify groth16 proof...");
@@ -427,52 +428,6 @@ async function withdraw(proof, publicSignals) {
     publicSignalsBuffer,
   ]);
 
-  // const publicSignalsBuffer = to32ByteBuffer(BigInt(publicSignals[0]));
-  // let public_signal_0_u8_array = Array.from(publicSignalsBuffer);
-  // console.log(public_signal_0_u8_array);
-
-  // // Convert proof components to buffers
-
-  // const proofA = Buffer.concat([
-  //   bigIntToBuffer(proof.pi_a[0], 32),
-  //   bigIntToBuffer(proof.pi_a[1], 32),
-  // ]); // Should be exactly 64 bytes
-
-  // const proofB = Buffer.concat([
-  //   bigIntToBuffer(proof.pi_b[0][0], 32),
-  //   bigIntToBuffer(proof.pi_b[0][1], 32),
-  //   bigIntToBuffer(proof.pi_b[1][0], 32),
-  //   bigIntToBuffer(proof.pi_b[1][1], 32),
-  // ]); // Should be exactly 128 bytes
-
-  // const proofC = Buffer.concat([
-  //   bigIntToBuffer(proof.pi_c[0], 32),
-  //   bigIntToBuffer(proof.pi_c[1], 32),
-  // ]); // Should be exactly 64 bytes
-
-  // // Convert public signals to buffer
-  // const publicSignalsBuffer = Buffer.concat(
-  //   publicSignals.map((signal) => bigIntToBuffer(signal, 32))
-  // );
-
-  // // Concatenate all instruction data
-  // const instructionData = Buffer.concat([
-  //   discriminator,
-  //   publicSignalsBuffer,
-  //   proofA,
-  //   proofB,
-  //   proofC,
-  // ]);
-
-  // console.log("ProofA length in bytes: ", proofA.byteLength);
-  // console.log("ProofB length in bytes: ", proofB.byteLength);
-  // console.log("ProofC length in bytes: ", proofC.byteLength);
-  // console.log("publicInputs length in bytes: ", publicSignalsBuffer.byteLength);
-
-  // console.log("Buffer array proof a: ", Array.from(proofA));
-  // console.log("Buffer array proof b: ", Array.from(proofB));
-  // console.log("Buffer array proof c: ", Array.from(proofC));
-  // console.log("Buffer array publicSignals: ", Array.from(publicSignalsBuffer));
 
   const identifier = readlineSync.question("Pool identifier: ");
 
@@ -597,8 +552,8 @@ async function main() {
     console.log("2) Deposit 0.1 SOL");
     console.log("3) generate proof");
     console.log("4) Send proof for verification");
-    console.log("5) generate a merkle tree");
-    console.log("6) Test hash");
+    console.log("5) generate a merkle tree (Testing purposes)");
+    console.log("6) Test hash (Testing purposes)");
 
     const choice = readlineSync.question("Choose an option: ");
 

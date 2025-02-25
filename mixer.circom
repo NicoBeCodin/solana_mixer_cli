@@ -56,8 +56,8 @@ template Mkt2Verifier(nLevels) {
         log(siblings[i]);
     }
 
-    log(levels[0].root);
-    log(root);
+    log(levels[O].root);
+    log(root)
 
     root === levels[0].root;
 }

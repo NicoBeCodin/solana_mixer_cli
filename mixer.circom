@@ -29,13 +29,18 @@ template Mkt2VerifierLevel() {
 template Mkt2Verifier(nLevels) {
 
     signal input key;
-    signal input value;
+    signal input secret;
+    signal input nullifier;
+    signal input nullifierHash;
     signal input root;
     signal input siblings[nLevels];
 
-    component hashV = Poseidon(1);
+    component hashV = Poseidon(2);
+    hashV.inputs[0] <== secret;
+    hashV.inputs[1] <== nullifier;
 
-    hashV.inputs[0] <== value;
+    component hashNullifier = Poseidon(1);
+    hashNullifier.inputs[0] <== nullifier;
 
     component n2b = Num2Bits(nLevels);
     component levels[nLevels];
@@ -45,23 +50,25 @@ template Mkt2Verifier(nLevels) {
     for (var i=nLevels-1; i>=0; i--) {
         levels[i] = Mkt2VerifierLevel();
         levels[i].sibling <== siblings[i];
-        levels[i].selector <== n2b.out[i];
+        // levels[i].selector <== n2b.out[i];
+        levels[i].selector <== n2b.out[nLevels - 1 - i];
         if (i==nLevels-1) {
             levels[i].low <== hashV.out;
         }
         else {
             levels[i].low <== levels[i+1].root;
         }
-        log(i);
-        log(siblings[i]);
+        log("i: ",i);
+        log("siblings[i]",siblings[i]);
     }
 
-    log(levels[O].root);
-    log(root)
-
+    log(levels[0].root);
+    log(root);
+    
     root === levels[0].root;
+    hashNullifier.out === nullifierHash;
 }
 
-component main { public [root] } = Mkt2Verifier(4);
+component main { public [root, nullifierHash] } = Mkt2Verifier(4);
 
 

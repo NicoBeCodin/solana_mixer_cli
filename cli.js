@@ -18,7 +18,8 @@ const PROGRAM_ID = new web3.PublicKey(
 );
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const FIXED_DEPOSIT_AMOUNT = Math.floor(0.1 * LAMPORTS_PER_SOL);
-
+const POOL_SEED = Buffer.from("pool_merkle");
+const NULLIFIER_SEED =  Buffer.from("nullifier");
 // Connect to Solana devnet
 const connection = new web3.Connection(
   web3.clusterApiUrl("devnet"),
@@ -78,22 +79,13 @@ async function sendTransactionWithLogs(transaction) {
   }
 }
 
-// const { buildPoseidon, poseidon, poseidon1 } = require("circomlibjs");
-// const poseidon254 = createHash(1, 8, 56);
-
 async function generateLeaf(secret, nullifier) {
-  // Step 1: Concatenate raw bytes (as in Rust)
   const secretBuffer = Buffer.from(secret, "utf8");
   const nullifierBuffer = Buffer.from(nullifier, "utf8");
-  const concatenated = Buffer.concat([secretBuffer, nullifierBuffer]);
-
-  // Step 2: Convert to BigInt (BigEndian)
-  const concatenatedHex = concatenated.toString("hex");
-  const inputBigInt = BigInt("0x" + concatenatedHex);
-
-  const hash = poseidon1([inputBigInt]);
-
-  const hashBuffer = hashBigIntToBytes(hash);
+  const secretBigInt = BigInt("0x" + secretBuffer.toString("hex"));
+  const nullifierBigInt = BigInt("0x" + nullifierBuffer.toString("hex"));
+  const leafHash = poseidon2([secretBigInt, nullifierBigInt]);
+  const hashBuffer = hashBigIntToBytes(leafHash);
   return hashBuffer;
 }
 
@@ -133,15 +125,18 @@ async function initializePool() {
   const identifier = prompt("Enter identifier: ");
   const discriminator = getInstructionDiscriminator("global:initialize_pool");
 
-  const seed1 = Buffer.from("pool_merkle");
-  const seed2 = (() => {
+
+  const seed3 = (() => {
     buffer = Buffer.alloc(8);
     buffer.writeBigUInt64LE(BigInt(identifier), 0);
     return buffer;
   })();
-
   const [poolPDA, bump] = web3.PublicKey.findProgramAddressSync(
-    [seed1, seed2],
+    [POOL_SEED, seed3],
+    PROGRAM_ID
+  );
+  const [nullifierPDA, bump_nullifiers] = web3.PublicKey.findProgramAddressSync(
+    [NULLIFIER_SEED, seed3],
     PROGRAM_ID
   );
 
@@ -163,7 +158,9 @@ async function initializePool() {
   const instruction = new web3.TransactionInstruction({
     keys: [
       { pubkey: poolPDA, isSigner: false, isWritable: true },
+      { pubkey: nullifierPDA, isSigner: false, isWritable: true }, // User making the deposit
       { pubkey: payer.publicKey, isSigner: true, isWritable: false },
+      
       {
         pubkey: web3.SystemProgram.programId,
         isSigner: false,
@@ -191,17 +188,18 @@ async function deposit() {
   const identifier = prompt("Enter identifier: ");
   console.log("Generating commitment...");
 
-  const seed1 = Buffer.from("pool_merkle");
+  
   const seed2 = (() => {
     buffer = Buffer.alloc(8);
     buffer.writeBigUInt64LE(BigInt(identifier), 0);
     return buffer;
   })();
 
-  const [poolPDA, bump] = web3.PublicKey.findProgramAddressSync(
-    [seed1, seed2],
+  const [poolPDA, bump_pool] = web3.PublicKey.findProgramAddressSync(
+    [POOL_SEED, seed2],
     PROGRAM_ID
   );
+
 
   // Generate secret and nullifier
   const secret = prompt("Enter secret: "); // Random secret
@@ -217,7 +215,7 @@ async function deposit() {
   const instructionData = new web3.TransactionInstruction({
     keys: [
       { pubkey: poolPDA, isSigner: false, isWritable: true }, // Pool PDA
-      { pubkey: payer.publicKey, isSigner: true, isWritable: false }, // User making the deposit
+      { pubkey: payer.publicKey, isSigner: true, isWritable: false }, // Nullifier list pda
       {
         pubkey: web3.SystemProgram.programId,
         isSigner: false,
@@ -260,33 +258,30 @@ async function generateDepositProof() {
 
     const inputBigInt = BigInt("0x" + concatenatedHex);
     const leafPreimage = inputBigInt;
-    const leafHashed = poseidon1([inputBigInt]);
+    const nullifierHashed = poseidon1([nullifierBigInt]);
     console.log("Preimage secret+nullifier bigint", leafPreimage.toString());
-    console.log("Hashed leaf:");
-    hashBigIntToBytes(leafHashed);
-    let circomPoseidon = await buildPoseidon();
-    const circomOutput = BigInt(
-      circomPoseidon.F.toString(circomPoseidon([inputBigInt]))
-    );
-    console.log("Circom poseidon output: ", circomOutput.toString());
+    // const leafHashed = poseidon1([inputBigInt]);//We won't use this anymore
+    // console.log("Hashed leaf:");
+    // hashBigIntToBytes(leafHashed);
+    // let circomPoseidon = await buildPoseidon();
+    // const circomOutput = BigInt(
+    //   circomPoseidon.F.toString(circomPoseidon([inputBigInt]))
+    // );
+    // console.log("Circom poseidon output: ", circomOutput.toString());
 
+    //This method is the one we choose now
     const hashv = poseidon2([secretBigInt, nullifierBigInt]);
-    const circomOutput2 = BigInt(
-      circomPoseidon.F.toString(circomPoseidon([secretBigInt, nullifierBigInt]))
-    );
-    console.log("poseidon2 lite output: ");
-    hashBigIntToBytes(hashv);
-    console.log("circom2 output: ", circomOutput2.toString());
+    // const circomOutput2 = BigInt(
+    //   circomPoseidon.F.toString(circomPoseidon([secretBigInt, nullifierBigInt]))
+    // ); //This is equivalent to hashv
+    // console.log("poseidon2 lite output: ");
+    // hashBigIntToBytes(hashv);
+    // console.log("circom2 output: ", circomOutput2.toString());
 
-    const defaultLeaf = BigInt(0);
-    // Compute the Poseidon hash
-    const defaultHash = poseidon1([defaultLeaf]);
-    console.log("default Hash is : ", defaultHash.toString());
     // 3. Prompt user for identifier
     const identifier = prompt("Enter identifier: ");
 
     // 4. Derive the pool PDA
-    const seed1 = Buffer.from("pool_merkle");
     const seed2 = (() => {
       const buffer = Buffer.alloc(8);
       buffer.writeBigUInt64LE(BigInt(identifier), 0);
@@ -294,7 +289,7 @@ async function generateDepositProof() {
     })();
 
     const [poolPDA, bump] = web3.PublicKey.findProgramAddressSync(
-      [seed1, seed2],
+      [POOL_SEED, seed2],
       PROGRAM_ID
     );
 
@@ -311,7 +306,7 @@ async function generateDepositProof() {
     console.log("On chain root as bigint: ", rootBigInt);
 
     // 7. Extract leaves
-    const leavesData = data.slice(40, 552);
+    const leavesData = data.slice(40, 552);//For 16 leaves
     const leaves = [];
     for (let i = 0; i < 16; i++) {
       const leafChunk = leavesData.slice(i * 32, (i + 1) * 32);
@@ -319,53 +314,32 @@ async function generateDepositProof() {
     }
 
     // 8. Find the leaf index
-    const leafIndex = leaves.findIndex((l) => l === leafHashed);
+    const leafIndex = leaves.findIndex((l) => l === hashv);
     if (leafIndex === -1) {
       throw new Error("Leaf not found in the Merkle tree.");
     }
     console.log("Leaf index is : ", leafIndex);
 
-    // 9. Compute Merkle proof (sibling path)
-    const siblingPath = [];
-    let index = leafIndex;
-    let currentLevel = [...leaves]; // Copy leaves to avoid modifying them
+    const tree = buildMerkleTree(leaves);
+    const proofPath = getMerkleProof(tree, leafIndex);
+    console.log("Proof path: ", proofPath);
 
-    while (currentLevel.length > 1) {
-      const nextLevel = [];
-      for (let i = 0; i < currentLevel.length; i += 2) {
-        const left = currentLevel[i];
-        const right = i + 1 < currentLevel.length ? currentLevel[i + 1] : left;
-
-        // Compute parent node
-        const parent = poseidon2([left, right]);
-
-        if (i === index || i + 1 === index) {
-          siblingPath.push(i === index ? right : left); // ✅ Correct sibling node
-          index = Math.floor(i / 2);
-        }
-
-        nextLevel.push(parent);
-      }
-      currentLevel = nextLevel; // Move to next level
-    }
-
-    console.log("Merkle proof path:", siblingPath);
-
-    // 10. Prepare inputs for Circom circuit
     const inputs = {
       key: leafIndex,
-      value: leafPreimage,
+      secret: secretBigInt,
+      nullifier: nullifierBigInt,
+      nullifierHash: nullifierHashed,
       root: rootBigInt,
-      siblings: siblingPath.reverse(),
+      siblings: proofPath.reverse(),
     };
 
     console.log("Inputs for circuit:", inputs);
 
     const wasmPath = "./mixer_js/mixer.wasm";
-    const zkeyPath = "mixer_final.zkey";
+    const zkeyPath = "mixer.zkey";
     const vkeyPath = "mixer_vkey.json";
     // 11. Generate zero-knowledge proof
-    const { proof, publicSignals } = await groth16.fullProve(
+    const { proof, publicSignals, } = await groth16.fullProve(
       inputs,
       wasmPath,
       zkeyPath
@@ -392,7 +366,56 @@ async function generateDepositProof() {
     throw error;
   }
 }
+function buildMerkleTree(leaves) {
+  // Start the tree with the leaves as the 0th level
+  const tree = [];
+  tree[0] = leaves.slice(); // Copy leaves to avoid mutating original
 
+  let level = 0;
+  // Keep combining until we reach a single element (the root)
+  while (tree[level].length > 1) {
+    const currentLevel = tree[level];
+    const nextLevel = [];
+
+    // Since leaves.length is always a power of two, i+1 will never go out of bounds
+    for (let i = 0; i < currentLevel.length; i += 2) {
+      const left = currentLevel[i];
+      const right = currentLevel[i + 1];
+      nextLevel.push(poseidon2([left, right]));
+    }
+
+    tree.push(nextLevel);
+    level++;
+  }
+  let size = tree.length;
+  const rootHash = tree[size-1][0]
+  console.log("root hash: ", rootHash);
+
+  return tree;
+}
+
+function getMerkleProof(tree, leafIndex) {
+  const proof = [];
+  let index = leafIndex;
+
+  console.log("Merkle proof process started");
+
+  for (let level = 0; level < tree.length - 1; level++) {
+    const isRightNode = index % 2 === 1; // Check if index is odd (right node)
+    const siblingIndex = isRightNode ? index - 1 : index + 1;
+
+    if (siblingIndex < tree[level].length) {
+      proof.push(tree[level][siblingIndex]);
+    } else {
+      console.warn(`Sibling index ${siblingIndex} out of bounds at level ${level}`);
+    }
+
+    // Move up in the tree
+    index = Math.floor(index / 2);
+  }
+
+  return proof;
+}
 
 
 async function withdraw(proof, publicSignals) {
@@ -415,9 +438,11 @@ async function withdraw(proof, publicSignals) {
   let pi_c_0_u8_array = Array.from(pi_c);
   console.log(pi_c_0_u8_array);
 
-  const publicSignalsBuffer = to32ByteBuffer(BigInt(publicSignals[0]));
-  let public_signal_0_u8_array = Array.from(publicSignalsBuffer);
-  console.log(public_signal_0_u8_array);
+  const rootPublicSignalBuffer = to32ByteBuffer(BigInt(publicSignals[0]));
+  const nullifierPublicSignalBuffer = to32ByteBuffer(BigInt(publicSignals[1]));
+  let public_signal_0_u8_array = Array.from(Buffer.concat([rootPublicSignalBuffer, nullifierPublicSignalBuffer]));
+  console.log("public signal array: ", public_signal_0_u8_array);
+
 
   const discriminator = getInstructionDiscriminator("global:withdraw");
   const serializedData = Buffer.concat([
@@ -425,28 +450,34 @@ async function withdraw(proof, publicSignals) {
     pi_a,
     pi_b,
     pi_c,
-    publicSignalsBuffer,
+    rootPublicSignalBuffer,
+    nullifierPublicSignalBuffer,
   ]);
 
 
   const identifier = readlineSync.question("Pool identifier: ");
 
-  const seed1 = Buffer.from("pool_merkle");
-  const seed2 = (() => {
+  const seed3 = (() => {
     buffer = Buffer.alloc(8);
     buffer.writeBigUInt64LE(BigInt(identifier), 0);
     return buffer;
   })();
 
-  const [poolPDA, bump] = web3.PublicKey.findProgramAddressSync(
-    [seed1, seed2],
+  const [poolPDA, bump_pool] = web3.PublicKey.findProgramAddressSync(
+    [POOL_SEED, seed3],
     PROGRAM_ID
   );
-
+  console.log("Pool bump:", bump_pool);
+  
+  const [nullifierPDA, bump_nullifier] = web3.PublicKey.findProgramAddressSync(
+    [NULLIFIER_SEED, seed3],
+    PROGRAM_ID
+  );
   // Create the transaction instruction
   const instruction = new web3.TransactionInstruction({
     keys: [
       { pubkey: poolPDA, isSigner: false, isWritable: true },
+      { pubkey: nullifierPDA, isSigner: false, isWritable: true },
       { pubkey: payer.publicKey, isSigner: true, isWritable: false },
       {
         pubkey: web3.SystemProgram.programId,
@@ -551,7 +582,7 @@ async function main() {
     console.log("1) Initialize Pool");
     console.log("2) Deposit 0.1 SOL");
     console.log("3) generate proof");
-    console.log("4) Send proof for verification");
+    console.log("4) Send proof & withdraw");
     console.log("5) generate a merkle tree (Testing purposes)");
     console.log("6) Test hash (Testing purposes)");
 

@@ -1,4 +1,7 @@
 # Solnado_cli
 
 ### TODO
-    - adapt merkle tree membership proof to fit n deep tree
+    - Fix the printing of public inputs
+    - Fix tree seeds (such that bump trait is implemented)
+    - Make tree larger
+    - Make tree indefinetely larger

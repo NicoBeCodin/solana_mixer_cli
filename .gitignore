@@ -3,3 +3,6 @@ membership
 *.zkey
 *.json
 *.ptau
+mixer_js
+*.sym
+*.r1cs

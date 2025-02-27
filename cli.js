@@ -200,7 +200,6 @@ async function deposit() {
     PROGRAM_ID
   );
 
-
   // Generate secret and nullifier
   const secret = prompt("Enter secret: "); // Random secret
   const nullifier = prompt("Enter nullifier: "); // Unique nullifier
@@ -260,24 +259,9 @@ async function generateDepositProof() {
     const leafPreimage = inputBigInt;
     const nullifierHashed = poseidon1([nullifierBigInt]);
     console.log("Preimage secret+nullifier bigint", leafPreimage.toString());
-    // const leafHashed = poseidon1([inputBigInt]);//We won't use this anymore
-    // console.log("Hashed leaf:");
-    // hashBigIntToBytes(leafHashed);
-    // let circomPoseidon = await buildPoseidon();
-    // const circomOutput = BigInt(
-    //   circomPoseidon.F.toString(circomPoseidon([inputBigInt]))
-    // );
-    // console.log("Circom poseidon output: ", circomOutput.toString());
-
+    
     //This method is the one we choose now
     const hashv = poseidon2([secretBigInt, nullifierBigInt]);
-    // const circomOutput2 = BigInt(
-    //   circomPoseidon.F.toString(circomPoseidon([secretBigInt, nullifierBigInt]))
-    // ); //This is equivalent to hashv
-    // console.log("poseidon2 lite output: ");
-    // hashBigIntToBytes(hashv);
-    // console.log("circom2 output: ", circomOutput2.toString());
-
     // 3. Prompt user for identifier
     const identifier = prompt("Enter identifier: ");
 
@@ -336,7 +320,7 @@ async function generateDepositProof() {
     console.log("Inputs for circuit:", inputs);
 
     const wasmPath = "./mixer_js/mixer.wasm";
-    const zkeyPath = "mixer.zkey";
+    const zkeyPath = "mixer_final.zkey";
     const vkeyPath = "mixer_vkey.json";
     // 11. Generate zero-knowledge proof
     const { proof, publicSignals, } = await groth16.fullProve(
@@ -506,71 +490,6 @@ async function withdraw(proof, publicSignals) {
   }
 }
 
-async function generateMerkleTree() {
-  const poseidon = await buildPoseidon();
-
-  // Generate 16 leaves, where each leaf is a Poseidon hash of [0..32]
-
-  // const defaultLeaf = new Array(32).fill(0);
-  const defaultLeaf = BigInt(0);
-
-  // Compute the Poseidon hash
-  const defaultHash = poseidon1([defaultLeaf]);
-  // 1. Prompt user for input as a normal string
-  const secret = prompt("Enter secret:");
-  // const secretBigInt = BigInt(secret);
-  const nullifier = prompt("Enter nullifier:");
-  // const nullifierBigInt = BigInt(nullifier)
-
-  // 2. Generate leaf hash using Poseidon
-  const secretBuffer = Buffer.from(secret, "utf8");
-  const nullifierBuffer = Buffer.from(nullifier, "utf8");
-  const concatenated = Buffer.concat([secretBuffer, nullifierBuffer]);
-  const concatenatedHex = concatenated.toString("hex");
-  const inputBigInt = BigInt("0x" + concatenatedHex);
-  const firstHash = poseidon1([inputBigInt]);
-
-  // 3. Convert Buffers to BigInts
-
-  const leaves = [firstHash];
-  for (let i = 0; i < 15; i++) {
-    const leaf = defaultHash; // Hash input [0..32]
-    leaves.push(leaf);
-  }
-
-  console.log("Merkle Tree Leaves:", leaves);
-
-  // Construct the Merkle Tree (Depth 4, since 16 leaves = 2^4)
-  let currentLevel = leaves;
-
-  while (currentLevel.length > 1) {
-    const nextLevel = [];
-    for (let i = 0; i < currentLevel.length; i += 2) {
-      const left = currentLevel[i];
-      const right = currentLevel[i + 1] || left; // Handle odd number of leaves
-      const parent = poseidon2([left, right]); // Hash the pair
-      nextLevel.push(parent);
-    }
-    currentLevel = nextLevel;
-  }
-
-  const root = currentLevel[0];
-  console.log("Computed Merkle Root:", root.toString());
-
-  return { root, leaves };
-}
-function testHash() {
-  const defaultLeaf = new Array(32).fill(0);
-
-  // Compute the Poseidon hash
-  const hash = poseidon1([defaultLeaf]);
-
-  // Convert the hash (a BigInt) to a hexadecimal string
-  const hashHex = hash.toString(16);
-
-  console.log("Poseidon hash of the default leaf:", hashHex);
-}
-
 // Function to prompt user
 async function main() {
   let proof = null;
@@ -583,8 +502,6 @@ async function main() {
     console.log("2) Deposit 0.1 SOL");
     console.log("3) generate proof");
     console.log("4) Send proof & withdraw");
-    console.log("5) generate a merkle tree (Testing purposes)");
-    console.log("6) Test hash (Testing purposes)");
 
     const choice = readlineSync.question("Choose an option: ");
 
@@ -609,12 +526,6 @@ async function main() {
         } else {
           await withdraw(proof, publicSignals);
         }
-        break;
-      case "5":
-        await generateMerkleTree();
-        break;
-      case "6":
-        testHash();
         break;
       default:
         console.log("Invalid choice. Try again.");

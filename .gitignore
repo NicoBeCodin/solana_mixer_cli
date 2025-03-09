@@ -1,0 +1,8 @@
+node_modules
+membership
+*.zkey
+*.json
+*.ptau
+mixer_js
+*.sym
+*.r1cs

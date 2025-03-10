@@ -205,3 +205,26 @@ export function padWithDefaultLeaves(leaves){
   console.log("Padded leaves length:", leaves.length);
   return leaves;
 }
+
+function getDefaultRootDepth(depth) {
+  let parentHash = BigInt(0); // Assuming DEFAULT_LEAF is defined as a constant
+
+  for (let i = 0; i < depth; i++) {
+      parentHash = poseidon2([parentHash, parentHash]);
+      console.log(`Depth ${i + 1} hash: ${parentHash.toString()}`);
+  }
+
+  return parentHash;
+}
+// Function to deepen the hash
+export function deepen(wholeTreeRoot, currentDepth, wantedDepth) {
+  let defaultHash = getDefaultRootDepth(currentDepth);
+  let hashed = poseidon2([wholeTreeRoot, defaultHash]);
+
+  for (let x = currentDepth + 1; x < wantedDepth; x++) {
+      defaultHash = getDefaultRootDepth(x);
+      hashed = poseidon2([hashed, defaultHash]);
+  }
+
+  return hashed;
+}

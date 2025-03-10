@@ -20,6 +20,7 @@ const {
   padBatches,
   padBatchesRecursive,
   padWithDefaultLeaves,
+  deepen
 } = require("./merkle_tree");
 const { toBigInt } = require("ethers");
 
@@ -29,6 +30,7 @@ const PROGRAM_ID = new web3.PublicKey(
 const LEDGER_PROGRAM_ID = new web3.PublicKey(
   "7GHv6NewxZEFDjkUor8Ko3DG9BbMu9UwvHz9ZhgEsoZF"
 );
+const TARGET_SIZE = 256;
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const FIXED_DEPOSIT_AMOUNT = Math.floor(0.1 * LAMPORTS_PER_SOL);
 const POOL_SEED = Buffer.from("pool_merkle");
@@ -459,7 +461,9 @@ async function generateDepositProofBatch() {
     const batches = await getBatchesForPool(identifier);
 
     const batchLeaves = batches.map((batch) => batch.leaves);
-    const paddedDefault = padWithDefaultLeaves(batchLeaves.flat());
+    let paddedDefault = padWithDefaultLeaves(batchLeaves.flat()); //to next power of two
+    
+
 
     const accountInfo = await connection.getAccountInfo(poolPDA);
     if (!accountInfo) {
@@ -475,31 +479,41 @@ async function generateDepositProofBatch() {
     for (let i = 0; i < 16; i++) {
       const leafChunk = leavesData.slice(i * 32, (i + 1) * 32);
       const bigIntLeaf = BigInt("0x" + leafChunk.toString("hex"));
-      console.log("bigIntLeaf", bigIntLeaf);
+      // console.log("bigIntLeaf", bigIntLeaf);
       leaves.push(bigIntLeaf);
     }
     console.log("For unbatched pool: ");
-    const tree = buildMerkleTree(leaves);
-    // console.log("On chain temporaty root as bigint: ", rootBigInt);
-
+    const unbatchedTree = buildMerkleTree(leaves);
+    const rootBigInt = BigInt("0x" + rootData.toString("hex"));
+    
     //root of the whole tree
     const wholeTreeRoot = data.slice(560, 592);
-    const rootBigInt = BigInt("0x" + rootData.toString("hex"));
     const wholeTreeRootBigInt = BigInt("0x" + wholeTreeRoot.toString("hex"));
-
 
     console.log("On chain whole tree root as bigint: ", wholeTreeRootBigInt);
     console.log("Should match the tree generated offchain: ");
     const paddedTree = buildMerkleTree(paddedDefault);
+    const computedPaddedRoot = paddedTree[paddedTree.length-1][0];
+    const deepenedHash = deepen(computedPaddedRoot, 6, )
 
-    const leafIndex = paddedDefault.findIndex((l) => l === hashv);
+    let extended = paddedDefault.slice();
+    for (let i = extended.length; i<TARGET_SIZE; i++){
+      extended.push(BigInt(0));
+    }
+    console.log("Extended tree size to: ", extended.length ); 
+
+    const extendedTree = buildMerkleTree(extended);
+    const extendedRoot = extendedTree[extendedTree.length-1][0];
+    console.log("generated extended tree root");
+  
+    const leafIndex = extended.findIndex((l) => l === hashv);
     if (leafIndex === -1) {
       throw new Error("Leaf not found in the Merkle tree.");
     }
     console.log("Leaf index is : ", leafIndex);
 
     //returns sibling path
-    const proofPath = getMerkleProof(paddedTree, leafIndex);
+    const proofPath = getMerkleProof(extendedTree, leafIndex);
     console.log("Proof path length: ", proofPath.length);
     console.log("Proof path: ", proofPath);
 
@@ -508,15 +522,15 @@ async function generateDepositProofBatch() {
       secret: secretBigInt,
       nullifier: nullifierBigInt,
       nullifierHash: nullifierHashed,
-      root: rootBigInt,
+      root: extendedRoot,
       siblings: proofPath.reverse(),
     };
 
     console.log("Inputs for circuit:", inputs);
 
     const wasmPath = "./mixer_js/mixer.wasm";
-    const zkeyPath = "mixer_final.zkey";
-    const vkeyPath = "mixer_vkey.json";
+    const zkeyPath = "circuit_final.zkey";
+    const vkeyPath = "verification_key.json";
     // 11. Generate zero-knowledge proof
     const { proof, publicSignals } = await groth16.fullProve(
       inputs,

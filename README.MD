@@ -3,6 +3,12 @@
 ## Overview
 The solana mixer a privacy-preserving transaction protocol built on the Solana blockchain using **zero-knowledge proofs (ZKPs)**. This system allows users to deposit funds into a pool and later withdraw them anonymously, leveraging Merkle trees and zk-SNARKs. The onchain logic repo is also available on my profile.
 
+## How to use
+ - Create a pool, give it a number as a identifier
+ - Deposit manually with a secret and nullifier or use the multiple deposits function
+ - Generate a proof by fetching the paased program instructions
+ - Send the proof and withdraw the funds
+
 ## Features
 - **Zero-Knowledge Proofs**: Uses Groth16 zk-SNARKs for verification without revealing inputs.
 - **Merkle Tree-Based Privacy**: Users prove they deposited funds without exposing their identity.

@@ -850,14 +850,13 @@ async function main() {
     console.log("\n=== SOLANA MIXER CLI ===");
     console.log("1) Initialize Pool");
     console.log("2) Deposit 0.1 SOL");
-    console.log("3) generate proof");
-    console.log("4) generate proof with batches");
+    console.log("3) Generate proof (deprecated method)");
+    console.log("4) Generate proof with batches");
     console.log("5) Send proof & withdraw");
-    console.log("6) deposit multiple");
+    console.log("6) Deposit multiple");
     console.log("7) Admin transfer ");
     console.log("8) Generate a merkle tree");
-    // The function to deposit n times using secret{i} and nullifier{i}.
-
+    // The function to deposit n times using secret{i} and nullifier{i}
     const choice = readlineSync.question("Choose an option: ");
 
     switch (choice) {

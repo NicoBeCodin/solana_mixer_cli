@@ -30,6 +30,10 @@ const PROGRAM_ID = new web3.PublicKey(
 const LEDGER_PROGRAM_ID = new web3.PublicKey(
   "7GHv6NewxZEFDjkUor8Ko3DG9BbMu9UwvHz9ZhgEsoZF"
 );
+const secondaryConnection = new web3.Connection(
+  "https://rpc.ankr.com/solana_devnet",
+  "confirmed"
+);
 const TARGET_SIZE = 256;
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const FIXED_DEPOSIT_AMOUNT = Math.floor(0.1 * LAMPORTS_PER_SOL);
@@ -331,10 +335,7 @@ async function depositMultiple(n) {
   }
 }
 
-const secondaryConnection = new web3.Connection(
-  "https://rpc.ankr.com/solana_devnet",
-  "confirmed"
-);
+//parses the solana ledger to fecth inner instructions that contain the leaves batches
 async function getBatchesForPool(targetIdentifier) {
   const targetId = BigInt(targetIdentifier);
   const ledgerProgramPubkey = LEDGER_PROGRAM_ID; // Should be a PublicKey instance.
@@ -463,8 +464,6 @@ async function generateDepositProofBatch() {
     const batchLeaves = batches.map((batch) => batch.leaves);
     let paddedDefault = padWithDefaultLeaves(batchLeaves.flat()); //to next power of two
     
-
-
     const accountInfo = await connection.getAccountInfo(poolPDA);
     if (!accountInfo) {
       throw new Error("Failed to fetch account data for this pool PDA.");
@@ -560,6 +559,7 @@ async function generateDepositProofBatch() {
   }
 }
 
+//Old method
 async function generateDepositProof() {
   try {
     // 1. Prompt user for input as a normal string

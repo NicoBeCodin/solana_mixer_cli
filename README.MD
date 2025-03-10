@@ -46,9 +46,8 @@ node cli.js
 ### Available Actions
 1. **Initialize Pool**: Creates a new mixing pool with an identifier (u64).
 2. **Deposit**: Deposits 0.1 SOL into the mixer.
-3. **Generate Proof**: Generates a zk-SNARK proof for withdrawal.
+3. **Generate Proof**: Generates a zk-SNARK proof for withdrawal, parses the solana ledger to get the leaf batches to reconstruct tree.
 4. **Withdraw**: Uses the proof to withdraw anonymously.
-
 
 
 ## Technical Details

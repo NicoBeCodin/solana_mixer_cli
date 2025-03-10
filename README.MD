@@ -53,12 +53,13 @@ node cli.js
 
 ## Technical Details
 - Uses **Groth16 zk-SNARKs** for proof generation.
+- Parses inner instructions of a given pool to find the leaves that are now stored on the ledger.
 - Implements a **Merkle Tree** to track deposits.
 - Uses **Poseidon hash function** for efficient zk-compatible hashing.
 - Interacts with Solana blockchain using **@solana/web3.js**.
 
 ## Roadmap
- - Support an indefinetely growing tree (for the moment capped at 16 leaves per pool)
+ - Support tree size is adjustable depending on target depth, you just need to recompile the mixer.circom with the target depth and change the verification key onchain.
  - Better safety 
  - Better throughput
 

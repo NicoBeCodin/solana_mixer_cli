@@ -93,6 +93,20 @@ export function computeRootFromPeaks(peaks) {
     return buffer;
   }
   
+  export function bigIntToU8Array(bigInt, byteLength = 32) {
+    let hex = bigInt.toString(16); // Convert to hex
+    if (hex.length % 2 !== 0) hex = "0" + hex; // Ensure even-length hex
+    let bytes = Buffer.from(hex, "hex"); // Convert hex to buffer
+  
+    // Ensure the byte array is `byteLength` long (default 32 bytes)
+    if (bytes.length < byteLength) {
+      const paddedBytes = Buffer.alloc(byteLength); // Create zero-filled buffer
+      bytes.copy(paddedBytes, byteLength - bytes.length); // Right-align bytes
+      bytes = paddedBytes;
+    }
+  
+    return Array.from(bytes); // Convert Buffer to an array of numbers (u8)
+  }
   
 
   export function buildMerkleTree(leaves) {
@@ -110,7 +124,9 @@ export function computeRootFromPeaks(peaks) {
       for (let i = 0; i < currentLevel.length; i += 2) {
         const left = currentLevel[i];
         const right = currentLevel[i + 1];
-        nextLevel.push(poseidon2([left, right]));
+        const merged = poseidon2([left, right]);
+        nextLevel.push(merged);
+        
       }
   
       tree.push(nextLevel);
@@ -119,7 +135,7 @@ export function computeRootFromPeaks(peaks) {
     let size = tree.length;
     const rootHash = tree[size-1][0]
     console.log("Root hash from generated tree: ", rootHash);
-    console.log("Root hash as byte array", Buffer.from(to32ByteBuffer(rootHash)))
+    console.log("Root hash as byte array", bigIntToU8Array(rootHash))
   
     return tree;
   }
@@ -211,7 +227,7 @@ function getDefaultRootDepth(depth) {
 
   for (let i = 0; i < depth; i++) {
       parentHash = poseidon2([parentHash, parentHash]);
-      console.log(`Depth ${i + 1} hash: ${parentHash.toString()}`);
+      // console.log(`Depth ${i + 1} hash: ${parentHash.toString()}`);
   }
 
   return parentHash;

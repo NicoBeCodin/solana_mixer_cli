@@ -20,13 +20,20 @@ const {
   padBatches,
   padBatchesRecursive,
   padWithDefaultLeaves,
-  deepen
+  bigIntToU8Array,
+  deepen,
 } = require("./merkle_tree");
 const { toBigInt } = require("ethers");
+const { decode } = require("punycode");
+
+// const PROGRAM_ID = new web3.PublicKey(
+//   "Ag36R1MUAHhyAYB96aR3JAScLqE6YFNau81iCcf2Y6RC"
+// );
 
 const PROGRAM_ID = new web3.PublicKey(
-  "Ag36R1MUAHhyAYB96aR3JAScLqE6YFNau81iCcf2Y6RC"
+  "EKadvTET2vdCkurkYFu69v2iXdsAwHs3rQPj8XL5AUin"
 );
+
 const LEDGER_PROGRAM_ID = new web3.PublicKey(
   "7GHv6NewxZEFDjkUor8Ko3DG9BbMu9UwvHz9ZhgEsoZF"
 );
@@ -191,7 +198,7 @@ async function initializePool() {
   });
 
   const computeBudgetIx = ComputeBudgetProgram.setComputeUnitLimit({
-    units: 1_000_000,
+    units: 500_000,
   });
 
   // Send the transaction
@@ -201,6 +208,69 @@ async function initializePool() {
   const tx = await sendTransactionWithLogs(transaction);
   console.log("Pool initialized. Transaction:", tx);
 }
+
+async function updateCurrentLeaves(poolAddress, leaf) {
+  const accountInfo = await connection.getAccountInfo(poolAddress);
+  if (!accountInfo) {
+    console.log("Pool doesn't exist!");
+    return null;
+  }
+
+  const data = Buffer.from(accountInfo.data);
+
+  // Extract leaves (40 to 552, which is 512 bytes)
+  const leaves = Buffer.from(data.slice(40, 40 + 512));  // Ensure mutable buffer
+
+  // Extract batch number (592 to 600, which is 8 bytes)
+  const batchNumberLE = data.slice(592, 600);
+  const batchNumber = Buffer.alloc(8);
+
+  // Convert batch number from LE to BE
+  for (let i = 0; i < 8; i++) {
+    batchNumber[i] = batchNumberLE[7 - i];
+  }
+
+  // Ensure leaf is exactly 32 bytes
+  if (!Buffer.isBuffer(leaf)) {
+    console.error("Leaf is not a Buffer. Converting...");
+    leaf = Buffer.from(leaf);  // Convert to Buffer if it's not already
+  }
+
+  if (leaf.length !== 32) {
+    console.error("Error: Leaf must be exactly 32 bytes!");
+    return null;
+  }
+
+  // Find first empty 32-byte slot (all zeroes)
+  const emptyChunk = Buffer.alloc(32, 0); // A buffer of 32 zeroes
+  let foundIndex = -1;
+
+  for (let i = 0; i < 16; i++) { // 16 chunks of 32 bytes each
+    const start = i * 32;
+    const chunk = leaves.slice(start, start + 32);
+
+    if (chunk.equals(emptyChunk)) { // Check if it's all zeros
+      foundIndex = start;
+      break;
+    }
+  }
+
+  if (foundIndex !== -1) {
+    console.log(`✅ Found empty slot at index ${foundIndex / 32}, updating...`);
+    
+    // Replace the empty slot with the new leaf
+    leaf.copy(leaves, foundIndex);
+    
+  } else {
+    console.log("❌ No empty slot found, all leaves are full.");
+  }
+
+  // Concatenate batchNumber + updated leaves
+  const new_slice = Buffer.concat([batchNumber, leaves]);
+
+  return new_slice;
+}
+
 
 // Function to deposit
 async function deposit() {
@@ -227,6 +297,7 @@ async function deposit() {
   console.log("\nSecret: ", secret);
   console.log("Nullifier: ", nullifier);
   const leaf = await generateLeaf(secret, nullifier);
+  const leavesData = await updateCurrentLeaves(poolPDA, leaf);
 
   console.log("Constructing transaction...");
   const discriminator = getInstructionDiscriminator("global:deposit");
@@ -236,7 +307,7 @@ async function deposit() {
     keys: [
       { pubkey: poolPDA, isSigner: false, isWritable: true }, // Pool PDA
       { pubkey: payer.publicKey, isSigner: true, isWritable: false }, // Nullifier list pda
-      { pubkey: LEDGER_PROGRAM_ID, isSigner: false, isWritable: false },
+      // { pubkey: LEDGER_PROGRAM_ID, isSigner: false, isWritable: false },
       {
         pubkey: web3.SystemProgram.programId,
         isSigner: false,
@@ -244,11 +315,11 @@ async function deposit() {
       },
     ],
     programId: PROGRAM_ID,
-    data: Buffer.concat([Buffer.from(discriminator), leaf]),
+    data: Buffer.concat([Buffer.from(discriminator), leaf, leavesData]),
   });
 
   const computeBudgetIx = ComputeBudgetProgram.setComputeUnitLimit({
-    units: 1_000_000,
+    units: 500_000,
   });
 
   // Create and send the transaction
@@ -290,6 +361,7 @@ async function depositMultiple(n) {
 
     // Generate the leaf commitment.
     const leaf = await generateLeaf(secret, nullifier);
+    // const leaf = BigInt(1);
 
     console.log("Constructing deposit transaction...");
 
@@ -297,14 +369,20 @@ async function depositMultiple(n) {
     const discriminator = getInstructionDiscriminator("global:deposit");
 
     // Create the instruction data (discriminator + leaf).
-    const instructionData = Buffer.concat([Buffer.from(discriminator), leaf]);
+    const leavesInfo = await updateCurrentLeaves(poolPDA, leaf);
+    const instructionData = Buffer.concat([
+      Buffer.from(discriminator),
+      leaf,
+      leavesInfo,
+    ]);
+
 
     // Create the transaction instruction.
     const depositIx = new web3.TransactionInstruction({
       keys: [
         { pubkey: poolPDA, isSigner: false, isWritable: true }, // Pool PDA
         { pubkey: payer.publicKey, isSigner: true, isWritable: false }, // Depositor (payer)
-        { pubkey: LEDGER_PROGRAM_ID, isSigner: false, isWritable: false },
+        // { pubkey: LEDGER_PROGRAM_ID, isSigner: false, isWritable: false },
         {
           pubkey: web3.SystemProgram.programId,
           isSigner: false,
@@ -333,6 +411,81 @@ async function depositMultiple(n) {
       console.error(`Error during deposit iteration ${i}:`, error);
     }
   }
+}
+
+async function getBatchesFromTransactions(poolPDA, targetIdentifier) {
+  const sigInfos = await connection.getSignaturesForAddress(poolPDA, {
+    limit: 1000,
+  });
+  // console.log(sigInfos);
+  const connections = [connection, secondaryConnection];
+  const batches = [];
+
+  const limit = Math.min(sigInfos.length, 10000);
+  for (let i = 0; i < limit; i++) {
+    const sigInfo = sigInfos[i];
+    const tmp_connection = connections[i % connections.length];
+    // Delay to avoid rate limits.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    try {
+      const tx = await tmp_connection.getTransaction(sigInfo.signature, {
+        commitment: "confirmed",
+        maxSupportedTransactionVersion: 0,
+      });
+      if (!tx || !tx.transaction) {
+        console.log("Failed to fetch transaction:", sigInfo.signature);
+        continue;
+      }
+      let instr = tx.transaction.message.instructions;
+
+      let instrData = tx.transaction.message.instructions[1].data;
+      let decodedData = bs58.default.decode(instrData);
+      const decodedLength = decodedData.length;
+      if (decodedLength == 560) {
+        // console.log("tx: ", instr);
+        if (decodedLength == 560) {
+          const lastBytes = decodedData.slice(
+            decodedLength - 32,
+            decodedLength 
+          );
+          // console.log("Last bytes: ", lastBytes);
+          const intValue = toBigInt(lastBytes);
+          //Identify non zero batches
+          if (intValue != 0) {
+            const batchId = toBigInt(decodedData.slice(40, 48));
+            console.log("Full batch found! n: ", batchId);
+            const leaves = [];
+            const leavesData = decodedData.slice(560-512, 560);
+            for (let j = 0; j < 16; j++) {
+              const leafChunk = leavesData.slice(j * 32, (j + 1) * 32);
+              // const leaf = BigInt("0x" + leafChunk.toString("hex"));
+              const leaf = toBigInt(leafChunk);
+              // console.log("Leaf: ", leaf);
+              leaves.push(leaf);
+            }
+            console.log("Merkle tree built from this batch: ");
+            buildMerkleTree(leaves);
+              batches.push({ batchId, leaves, txSignature: sigInfo.signature });
+              if (batchId == 0) {
+                console.log("Found 0th batch, stopping th parsing");
+                i = 999999;
+                break;
+              }
+          } else {
+            //Nothing happens we keep parsing
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`Error fetching transaction ${sigInfo.signature}:`, error);
+      continue;
+    }
+  }
+    // Sort batches by batchId (ascending: oldest first)
+    batches.sort((a, b) =>
+      a.batchId < b.batchId ? -1 : a.batchId > b.batchId ? 1 : 0
+    );
+    return batches;
 }
 
 //parses the solana ledger to fecth inner instructions that contain the leaves batches
@@ -459,10 +612,16 @@ async function generateDepositProofBatch() {
       PROGRAM_ID
     );
 
-    const batches = await getBatchesForPool(identifier);
+    // const batches = await getBatchesForPool(identifier);
+    const batches = await getBatchesFromTransactions(poolPDA, identifier);
 
     const batchLeaves = batches.map((batch) => batch.leaves);
+    for (let i =0; i<batchLeaves.length; i++) {
+      console.log("leaf",i," " )
+    }
+
     let paddedDefault = padWithDefaultLeaves(batchLeaves.flat()); //to next power of two
+
     
     const accountInfo = await connection.getAccountInfo(poolPDA);
     if (!accountInfo) {
@@ -473,18 +632,18 @@ async function generateDepositProofBatch() {
     // 6. Extract Merkle root
     const rootData = data.slice(8, 40);
     // 7. Extract leaves
-    const leavesData = data.slice(40, 552); //For 16 leaves
-    const leaves = [];
-    for (let i = 0; i < 16; i++) {
-      const leafChunk = leavesData.slice(i * 32, (i + 1) * 32);
-      const bigIntLeaf = BigInt("0x" + leafChunk.toString("hex"));
-      // console.log("bigIntLeaf", bigIntLeaf);
-      leaves.push(bigIntLeaf);
-    }
-    console.log("For unbatched pool: ");
-    const unbatchedTree = buildMerkleTree(leaves);
-    const rootBigInt = BigInt("0x" + rootData.toString("hex"));
-    
+    // const leavesData = data.slice(40, 552); //For 16 leaves
+    // const leaves = [];
+    // for (let i = 0; i < 16; i++) {
+    //   const leafChunk = leavesData.slice(i * 32, (i + 1) * 32);
+    //   const bigIntLeaf = BigInt("0x" + leafChunk.toString("hex"));
+    //   // console.log("bigIntLeaf", bigIntLeaf);
+    //   leaves.push(bigIntLeaf);
+    // }
+    // console.log("For unbatched pool: ");
+    // const unbatchedTree = buildMerkleTree(leaves);
+    // const rootBigInt = BigInt("0x" + rootData.toString("hex"));
+
     //root of the whole tree
     const wholeTreeRoot = data.slice(560, 592);
     const wholeTreeRootBigInt = BigInt("0x" + wholeTreeRoot.toString("hex"));
@@ -492,19 +651,19 @@ async function generateDepositProofBatch() {
     console.log("On chain whole tree root as bigint: ", wholeTreeRootBigInt);
     console.log("Should match the tree generated offchain: ");
     const paddedTree = buildMerkleTree(paddedDefault);
-    const computedPaddedRoot = paddedTree[paddedTree.length-1][0];
-    const deepenedHash = deepen(computedPaddedRoot, 6, )
+    const computedPaddedRoot = paddedTree[paddedTree.length - 1][0];
+    const deepenedHash = deepen(computedPaddedRoot, 6);
 
     let extended = paddedDefault.slice();
-    for (let i = extended.length; i<TARGET_SIZE; i++){
+    for (let i = extended.length; i < TARGET_SIZE; i++) {
       extended.push(BigInt(0));
     }
-    console.log("Extended tree size to: ", extended.length ); 
+    console.log("Extended tree size to: ", extended.length);
 
     const extendedTree = buildMerkleTree(extended);
-    const extendedRoot = extendedTree[extendedTree.length-1][0];
+    const extendedRoot = extendedTree[extendedTree.length - 1][0];
     console.log("generated extended tree root");
-  
+
     const leafIndex = extended.findIndex((l) => l === hashv);
     if (leafIndex === -1) {
       throw new Error("Leaf not found in the Merkle tree.");
@@ -514,7 +673,7 @@ async function generateDepositProofBatch() {
     //returns sibling path
     const proofPath = getMerkleProof(extendedTree, leafIndex);
     console.log("Proof path length: ", proofPath.length);
-    console.log("Proof path: ", proofPath);
+    // console.log("Proof path: ", proofPath);
 
     const inputs = {
       key: leafIndex,
@@ -522,6 +681,7 @@ async function generateDepositProofBatch() {
       nullifier: nullifierBigInt,
       nullifierHash: nullifierHashed,
       root: extendedRoot,
+      
       siblings: proofPath.reverse(),
     };
 
@@ -537,12 +697,13 @@ async function generateDepositProofBatch() {
       zkeyPath
     );
 
-    console.log("Generated proof:", proof);
+    // console.log("Generated proof:", proof);
+
     console.log("Public signals:", publicSignals);
 
     // 12. Load verification key
     const vkey = JSON.parse(fs.readFileSync(vkeyPath, "utf8"));
-    console.log("Verification key: ", vkey);
+    // console.log("Verification key: ", vkey);
 
     // 13. Validate proof with vkey
     const isValid = await groth16.verify(vkey, publicSignals, proof);
@@ -764,7 +925,7 @@ async function withdraw(proof, publicSignals) {
 
   // Set a high compute budget for verification
   const computeBudgetIx = ComputeBudgetProgram.setComputeUnitLimit({
-    units: 1_300_000,
+    units: 1_000_000,
   });
 
   try {
@@ -850,12 +1011,12 @@ async function main() {
     console.log("\n=== SOLANA MIXER CLI ===");
     console.log("1) Initialize Pool");
     console.log("2) Deposit 0.1 SOL");
-    console.log("3) Generate proof (deprecated method)");
+    console.log("3) Generate proof (deprecated method for testing purposes) ");
     console.log("4) Generate proof with batches");
     console.log("5) Send proof & withdraw");
-    console.log("6) Deposit multiple");
-    console.log("7) Admin transfer ");
-    console.log("8) Generate a merkle tree");
+    console.log("6) Deposit multiple (Testing purposes)");
+    console.log("7) Admin transfer (Testing purposes)");
+    console.log("8) Generate a merkle tree (Testing purposes)");
     // The function to deposit n times using secret{i} and nullifier{i}
     const choice = readlineSync.question("Choose an option: ");
 

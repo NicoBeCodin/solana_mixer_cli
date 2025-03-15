@@ -395,7 +395,7 @@ async function depositMultiple(n) {
 
     // Add a compute budget instruction (if needed).
     const computeBudgetIx = ComputeBudgetProgram.setComputeUnitLimit({
-      units: 1_000_000,
+      units: 200_000,
     });
 
     // Construct the transaction.

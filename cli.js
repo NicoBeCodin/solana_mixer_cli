@@ -895,7 +895,7 @@ async function withdraw(proof, publicSignals) {
   );
   
   const poolInfo = await connection.getAccountInfo(poolPDA);
-  const creatorPubkeyData= poolInfo.data.slice(552, 584);
+  const creatorPubkeyData= poolInfo.data.slice(568, 568+32);
   const creatorPubkey = new web3.PublicKey(creatorPubkeyData);
 
   

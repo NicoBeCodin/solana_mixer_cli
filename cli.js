@@ -81,30 +81,7 @@ function hashBigIntToBytes(hashBigInt) {
   console.log("Hash buffer:", Array.from(hashBuffer));
   return hashBuffer;
 }
-// Utility: Send and confirm a transaction with logs, payer is default signer
-// async function sendTransactionWithLogs(transaction) {
-//   try {
-//     const signature = await web3.sendAndConfirmTransaction(
-//       connection,
-//       transaction,
-//       [payer]
-//     );
-//     console.log("Transaction confirmed with signature:", signature);
 
-//     // Fetch and display logs
-//     const txDetails = await connection.getTransaction(signature, {
-//       commitment: "confirmed",
-//     });
-//     if (txDetails && txDetails.meta && txDetails.meta.logMessages) {
-//       console.log("Transaction Logs:");
-//       txDetails.meta.logMessages.forEach((log) => console.log(log));
-//     }
-//     return signature;
-//   } catch (err) {
-//     console.error("Error during transaction:", err);
-//     throw err;
-//   }
-// }
 
 async function sendTransactionWithLogs(transaction) {
   try {
@@ -510,60 +487,75 @@ const customRPC = new web3.Connection(
   "https://devnet.helius-rpc.com/?api-key=a36697fc-de4a-44ca-993d-a0acacc65668",
   "confirmed"
 );
-async function getBatchesFromMemos(poolPDA) {
-  const sigInfos = await connection.getSignaturesForAddress(poolPDA, {
-    limit: 1000,
-  });
 
-  console.log(sigInfos);
+async function getBatchesFromMemos(poolPDA) {
+  let allSigInfos = [];
+  let beforeSignature = null;
+  const limit = 1000;
+
+  while (true) {
+    const options = { limit };
+    if (beforeSignature) {
+      options.before = beforeSignature;
+    }
+
+    const sigInfos = await connection.getSignaturesForAddress(poolPDA, options);
+    if (sigInfos.length === 0) {
+      break; // No more signatures to fetch
+    }
+
+    allSigInfos = allSigInfos.concat(sigInfos);
+    beforeSignature = sigInfos[sigInfos.length - 1].signature;
+
+    // If the number of fetched signatures is less than the limit, we've reached the earliest transactions
+    if (sigInfos.length < limit) {
+      break;
+    }
+  }
+
+  console.log(allSigInfos);
   const batches = [];
-  for (let i = 0; i < sigInfos.length; i++) {
-    let memoBase64 = sigInfos[i].memo.slice(4, ); //Ignore first 4 bytes
+
+  for (let i = 0; i < allSigInfos.length; i++) {
+    const memoBase64 = allSigInfos[i].memo ? allSigInfos[i].memo.slice(4) : null; // Ignore first 4 bytes
     if (!memoBase64) {
       continue;
-    } else {
-      const memoBytes = Buffer.from(memoBase64, "base64");
-      if (memoBytes.length != 520) {
-        console.log("Not 520 bytes long");
-        console.log("memoBytes is: ", memoBytes);
-      } else {
-        const lastBytes = memoBytes.slice(
-          memoBytes.length - 32,
-          memoBytes.length
-        );
-        // console.log("Last bytes: ", lastBytes);
-        const intValue = toBigInt(lastBytes);
-        //Identify non zero batches
-        if (intValue != 0) {
-          const batchId = toBigInt(memoBytes.slice(0, 8));
-          console.log("Full batch found! n: ", batchId);
-          const leaves = [];
-          const leavesData = memoBytes.slice(8, 520);
-          for (let j = 0; j < 16; j++) {
-            const leafChunk = leavesData.slice(j * 32, (j + 1) * 32);
-            // const leaf = BigInt("0x" + leafChunk.toString("hex"));
-            const leaf = toBigInt(leafChunk);
-            // console.log("Leaf: ", leaf);
-            leaves.push(leaf);
-          }
-          console.log("Merkle tree built from this batch: ");
-          buildMerkleTree(leaves);
-          batches.push({ batchId, leaves, txSignature: sigInfos[i].signature });
-          if (batchId == 0) {
-            console.log("Found 0th batch, stopping the parsing");
-            i = 999999;
-            break;
-          }
-        } 
+    }
 
+    const memoBytes = Buffer.from(memoBase64, "base64");
+    if (memoBytes.length !== 520) {
+      console.log("Not 520 bytes long");
+      console.log("memoBytes is: ", memoBytes);
+      continue;
+    }
+
+    const lastBytes = memoBytes.slice(-32);
+    const intValue = toBigInt(lastBytes);
+
+    if (intValue !== 0n) {
+      const batchId = toBigInt(memoBytes.slice(0, 8));
+      console.log("Full batch found! n: ", batchId);
+      const leaves = [];
+      const leavesData = memoBytes.slice(8, 520);
+      for (let j = 0; j < 16; j++) {
+        const leafChunk = leavesData.slice(j * 32, (j + 1) * 32);
+        const leaf = toBigInt(leafChunk);
+        leaves.push(leaf);
+      }
+      console.log("Merkle tree built from this batch: ");
+      buildMerkleTree(leaves);
+      batches.push({ batchId, leaves, txSignature: allSigInfos[i].signature });
+      if (batchId === 0n) {
+        console.log("Found 0th batch, stopping the parsing");
+        break;
       }
     }
   }
-  batches.sort((a, b) =>
-    a.batchId < b.batchId ? -1 : a.batchId > b.batchId ? 1 : 0
-  );
+
+  batches.sort((a, b) => (a.batchId < b.batchId ? -1 : a.batchId > b.batchId ? 1 : 0));
   return batches;
 }
+
 
 async function getBatchesFromTransactions(poolPDA) {
   const sigInfos = await connection.getSignaturesForAddress(poolPDA, {
@@ -725,7 +717,7 @@ async function getBatchesForPool(targetIdentifier) {
   );
   return batches;
 }
-
+-
 async function generateDepositProofBatch() {
   try {
     // 1. Prompt user for input as a normal string
@@ -779,8 +771,7 @@ async function generateDepositProofBatch() {
 
     // 6. Extract Merkle root
     const rootData = data.slice(8, 40);
-    // 7. Extract leaves
-
+  
     //root of the whole tree
     const wholeTreeRoot = data.slice(616, 648);
     const wholeTreeRootBigInt = BigInt("0x" + wholeTreeRoot.toString("hex"));
@@ -1084,128 +1075,3 @@ async function main() {
 
 main();
 
-// //Old method
-// async function generateDepositProof() {
-//   try {
-//     // 1. Prompt user for input as a normal string
-//     const secret = prompt("Enter secret: ");
-//     // const secretBigInt = BigInt(secret);
-//     const nullifier = prompt("Enter nullifier: ");
-//     // const nullifierBigInt = BigInt(nullifier)
-
-//     // 2. Generate leaf hash using Poseidon
-//     const secretBuffer = Buffer.from(secret, "utf8");
-//     const nullifierBuffer = Buffer.from(nullifier, "utf8");
-//     const concatenated = Buffer.concat([secretBuffer, nullifierBuffer]);
-
-//     // 3. Convert Buffers to BigInts
-//     const concatenatedHex = concatenated.toString("hex");
-//     const secretBigInt = BigInt("0x" + secretBuffer.toString("hex"));
-//     const nullifierBigInt = BigInt("0x" + nullifierBuffer.toString("hex"));
-
-//     const inputBigInt = BigInt("0x" + concatenatedHex);
-//     const leafPreimage = inputBigInt;
-//     const nullifierHashed = poseidon1([nullifierBigInt]);
-//     console.log("Preimage secret+nullifier bigint", leafPreimage.toString());
-
-//     //This method is the one we choose now
-//     const hashv = poseidon2([secretBigInt, nullifierBigInt]);
-//     // 3. Prompt user for identifier
-//     const identifier = prompt("Enter identifier: ");
-
-//     // 4. Derive the pool PDA
-//     const seed2 = (() => {
-//       const buffer = Buffer.alloc(8);
-//       buffer.writeBigUInt64LE(BigInt(identifier), 0);
-//       return buffer;
-//     })();
-
-//     const [poolPDA, bump] = web3.PublicKey.findProgramAddressSync(
-//       [POOL_SEED, seed2],
-//       PROGRAM_ID
-//     );
-
-//     // 5. Fetch Merkle tree data from PDA
-//     const accountInfo = await connection.getAccountInfo(poolPDA);
-//     if (!accountInfo) {
-//       throw new Error("Failed to fetch account data for this pool PDA.");
-//     }
-//     const data = accountInfo.data;
-
-//     // 6. Extract Merkle root
-//     const rootData = data.slice(8, 40);
-//     const rootBigInt = BigInt("0x" + rootData.toString("hex"));
-//     console.log("On chain root as bigint: ", rootBigInt);
-
-//     // 7. Extract leaves
-//     const leavesData = data.slice(40, 552); //For 16 leaves
-//     const leaves = [];
-//     for (let i = 0; i < 16; i++) {
-//       const leafChunk = leavesData.slice(i * 32, (i + 1) * 32);
-//       const bigIntLeaf = BigInt("0x" + leafChunk.toString("hex"));
-//       console.log("bigIntLeaf", bigIntLeaf);
-//       leaves.push(bigIntLeaf);
-//     }
-
-//     const tree = buildMerkleTree(leaves);
-
-//     let defaultLeaves = [];
-//     for (let i = 0; i < 16; i++) {
-//       console.log("BigInt(0)", BigInt(0));
-//       defaultLeaves.push(BigInt(0));
-//     }
-//     console.log("Other tree");
-//     buildMerkleTree(defaultLeaves);
-
-//     // 8. Find the leaf index
-//     const leafIndex = leaves.findIndex((l) => l === hashv);
-//     if (leafIndex === -1) {
-//       throw new Error("Leaf not found in the Merkle tree.");
-//     }
-//     console.log("Leaf index is : ", leafIndex);
-
-//     const proofPath = getMerkleProof(tree, leafIndex);
-//     console.log("Proof path: ", proofPath);
-
-//     const inputs = {
-//       key: leafIndex,
-//       secret: secretBigInt,
-//       nullifier: nullifierBigInt,
-//       nullifierHash: nullifierHashed,
-//       root: rootBigInt,
-//       siblings: proofPath.reverse(),
-//     };
-
-//     console.log("Inputs for circuit:", inputs);
-
-//     const wasmPath = "./mixer_js/mixer.wasm";
-//     const zkeyPath = "mixer_final.zkey";
-//     const vkeyPath = "mixer_vkey.json";
-//     // 11. Generate zero-knowledge proof
-//     const { proof, publicSignals } = await groth16.fullProve(
-//       inputs,
-//       wasmPath,
-//       zkeyPath
-//     );
-
-//     console.log("Generated proof:", proof);
-//     console.log("Public signals:", publicSignals);
-
-//     // 12. Load verification key
-//     const vkey = JSON.parse(fs.readFileSync(vkeyPath, "utf8"));
-//     console.log("Verification key: ", vkey);
-
-//     // 13. Validate proof with vkey
-//     const isValid = await groth16.verify(vkey, publicSignals, proof);
-//     if (!isValid) {
-//       throw new Error(
-//         "Proof verification failed! The vkey does not match the proof."
-//       );
-//     }
-
-//     return { proof, publicSignals, verificationKey: vkey };
-//   } catch (error) {
-//     console.error("Error generating proof:", error);
-//     throw error;
-//   }
-// }

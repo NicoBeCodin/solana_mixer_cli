@@ -69,6 +69,4 @@ template Mkt2Verifier(nLevels) {
     hashNullifier.out === nullifierHash;
 }
 
-component main { public [root, nullifierHash] } = Mkt2Verifier(8);
-
-
+component main { public [root, nullifierHash] } = Mkt2Verifier(20);

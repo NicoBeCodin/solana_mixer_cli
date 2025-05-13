@@ -240,6 +240,8 @@ export function deepen(wholeTreeRoot, currentDepth, wantedDepth) {
   for (let x = currentDepth + 1; x < wantedDepth; x++) {
       defaultHash = getDefaultRootDepth(x);
       hashed = poseidon2([hashed, defaultHash]);
+      hashedArray = bigIntToU8Array(hashed);
+      console.log("i: ", i," hashed array: ", hashedArray);
   }
 
   return hashed;

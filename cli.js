@@ -41,12 +41,10 @@ const secondaryConnection = new web3.Connection(
   "https://rpc.ankr.com/solana_devnet",
   "confirmed"
 );
-const TARGET_SIZE = 256;
+const TARGET_SIZE = 1048576; //This corresponds to a 2**20
+const TARGET_DEPTH=  20;
 const LAMPORTS_PER_SOL = 1_000_000_000;
-const FIXED_DEPOSIT_AMOUNT = Math.floor(0.1 * LAMPORTS_PER_SOL);
 const POOL_SEED = Buffer.from("pool_merkle");
-const NULLIFIER_SEED = Buffer.from("nullifier");
-const LEDGER_SEED = Buffer.from("ledger");
 // Connect to Solana devnet
 const connection = new web3.Connection(
   web3.clusterApiUrl("devnet"),
@@ -556,168 +554,6 @@ async function getBatchesFromMemos(poolPDA) {
   return batches;
 }
 
-
-async function getBatchesFromTransactions(poolPDA) {
-  const sigInfos = await connection.getSignaturesForAddress(poolPDA, {
-    limit: 1000,
-  });
-
-  console.log(sigInfos);
-  const connections = [customRPC];
-  const batches = [];
-
-  const limit = Math.min(sigInfos.length, 10000);
-  for (let i = 0; i < limit; i++) {
-    const sigInfo = sigInfos[i];
-    console.log("Memo length:", sigInfos[i].memo.length);
-    const tmp_connection = connections[i % connections.length];
-    // Delay to avoid rate limits.
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    try {
-      const tx = await tmp_connection.getTransaction(sigInfo.signature, {
-        commitment: "confirmed",
-        maxSupportedTransactionVersion: 0,
-      });
-      if (!tx || !tx.transaction) {
-        console.log("Failed to fetch transaction:", sigInfo.signature);
-        continue;
-      }
-      let instr = tx.transaction.message.instructions;
-
-      let instrData = tx.transaction.message.instructions[1].data;
-      let decodedData = bs58.default.decode(instrData);
-      const decodedLength = decodedData.length;
-      if (decodedLength == 560) {
-        // console.log("tx: ", instr);
-        if (decodedLength == 560) {
-          const lastBytes = decodedData.slice(
-            decodedLength - 32,
-            decodedLength
-          );
-          // console.log("Last bytes: ", lastBytes);
-          const intValue = toBigInt(lastBytes);
-          //Identify non zero batches
-          if (intValue != 0) {
-            const batchId = toBigInt(decodedData.slice(40, 48));
-            console.log("Full batch found! n: ", batchId);
-            const leaves = [];
-            const leavesData = decodedData.slice(560 - 512, 560);
-            for (let j = 0; j < 16; j++) {
-              const leafChunk = leavesData.slice(j * 32, (j + 1) * 32);
-              // const leaf = BigInt("0x" + leafChunk.toString("hex"));
-              const leaf = toBigInt(leafChunk);
-              // console.log("Leaf: ", leaf);
-              leaves.push(leaf);
-            }
-            console.log("Merkle tree built from this batch: ");
-            buildMerkleTree(leaves);
-            batches.push({ batchId, leaves, txSignature: sigInfo.signature });
-            if (batchId == 0) {
-              console.log("Found 0th batch, stopping the parsing");
-              i = 999999;
-              break;
-            }
-          } else {
-            //Nothing happens we keep parsing
-          }
-        }
-      }
-    } catch (error) {
-      console.error(`Error fetching transaction ${sigInfo.signature}:`, error);
-      continue;
-    }
-  }
-  // Sort batches by batchId (ascending: oldest first)
-  batches.sort((a, b) =>
-    a.batchId < b.batchId ? -1 : a.batchId > b.batchId ? 1 : 0
-  );
-  return batches;
-}
-
-//parses the solana ledger to fecth inner instructions that contain the leaves batches
-async function getBatchesForPool(targetIdentifier) {
-  const targetId = BigInt(targetIdentifier);
-  const ledgerProgramPubkey = LEDGER_PROGRAM_ID; // Should be a PublicKey instance.
-  const connections = [connection, secondaryConnection]; // Use alternate connections to avoid rate limits.
-  const sigInfos = await connection.getSignaturesForAddress(
-    ledgerProgramPubkey,
-    { limit: 1000 }
-  );
-  const batches = [];
-  // console.log("sigInfos:", sigInfos);
-  console.log("Number of signatures:", sigInfos.length);
-
-  // For demonstration, we'll process only the first few signatures.
-  const limit = Math.min(sigInfos.length, 999);
-  for (let i = 0; i < limit; i++) {
-    const sigInfo = sigInfos[i];
-    const tmp_connection = connections[i % connections.length];
-    // Delay to avoid rate limits.
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    try {
-      const tx = await tmp_connection.getTransaction(sigInfo.signature, {
-        commitment: "confirmed",
-        maxSupportedTransactionVersion: 0,
-      });
-      if (!tx || !tx.transaction) {
-        console.log("Failed to fetch transaction:", sigInfo.signature);
-        continue;
-      }
-
-      // console.log("Transaction::: ",tx.transaction);
-      for (const instr of tx.meta.innerInstructions) {
-        let innerInstructionData = instr.instructions[0].data;
-        // Decode the instruction data from base58.
-        const data = bs58.default.decode(innerInstructionData);
-        // const data = Buffer.from(decodeBase58(instr.data.toString()))
-        if (data.length < 530) continue; // Not long enough for our store_batch data.
-        // console.log("Data after decode: ", data);
-
-        // Bytes 0-7: Discriminator (ignored)
-        // Bytes 8-15: Pool identifier (u64, little-endian)
-
-        const id = toBigInt(data.slice(8, 16).reverse());
-        // console.log("Parsed pool ID: ", id);
-        if (id !== targetId) continue;
-
-        // Bytes 16-23: Batch number (u64, little-endian)
-        const batchId = toBigInt(data.slice(16, 24).reverse());
-
-        // Bytes 24-535: 512 bytes for 16 leaves (32 bytes each)
-        const leaves = [];
-        const leavesData = data.slice(24, 536);
-        for (let j = 0; j < 16; j++) {
-          const leafChunk = leavesData.slice(j * 32, (j + 1) * 32);
-          // const leaf = BigInt("0x" + leafChunk.toString("hex"));
-          const leaf = toBigInt(leafChunk);
-          // console.log("Leaf: ", leaf);
-          leaves.push(leaf);
-        }
-
-        console.log("Parsed Pool Identifier:", id);
-        console.log("Parsed Leaves:", leaves);
-
-        console.log("Parsed Batch Number:", batchId);
-        batches.push({ batchId, leaves, txSignature: sigInfo.signature });
-        if (batchId == 0) {
-          console.log("batchID 0 found, stopping the parsing");
-          i = 9999;
-          break;
-        }
-      }
-    } catch (error) {
-      console.error(`Error fetching transaction ${sigInfo.signature}:`, error);
-      continue;
-    }
-  }
-
-  // Sort batches by batchId (ascending: oldest first)
-  batches.sort((a, b) =>
-    a.batchId < b.batchId ? -1 : a.batchId > b.batchId ? 1 : 0
-  );
-  return batches;
-}
--
 async function generateDepositProofBatch() {
   try {
     // 1. Prompt user for input as a normal string
@@ -768,9 +604,6 @@ async function generateDepositProofBatch() {
       throw new Error("Failed to fetch account data for this pool PDA.");
     }
     const data = accountInfo.data;
-
-    // 6. Extract Merkle root
-    const rootData = data.slice(8, 40);
   
     //root of the whole tree
     const wholeTreeRoot = data.slice(616, 648);
@@ -780,7 +613,7 @@ async function generateDepositProofBatch() {
     console.log("Should match the tree generated offchain: ");
     const paddedTree = buildMerkleTree(paddedDefault);
     const computedPaddedRoot = paddedTree[paddedTree.length - 1][0];
-    const deepenedHash = deepen(computedPaddedRoot, 6);
+    const deepenedHash = deepen(computedPaddedRoot, TARGET_DEPTH);
 
     let extended = paddedDefault.slice();
     for (let i = extended.length; i < TARGET_SIZE; i++) {
@@ -816,8 +649,8 @@ async function generateDepositProofBatch() {
     console.log("Inputs for circuit:", inputs);
 
     const wasmPath = "./mixer_js/mixer.wasm";
-    const zkeyPath = "circuit_final.zkey";
-    const vkeyPath = "verification_key.json";
+    const zkeyPath = "./mixer_js/circuit_final.zkey";
+    const vkeyPath = "./mixer_js/verification_key.json";
     // 11. Generate zero-knowledge proof
     const { proof, publicSignals } = await groth16.fullProve(
       inputs,
